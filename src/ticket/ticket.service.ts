@@ -1,10 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { DatabaseService } from '../database/database.service';
-import { CompanyConfig } from '../database/database.types';
-import { GeminiDecision } from '../gemini/gemini.service';
-import { categoryName, resolveCategoryId } from './categories';
-import { TicketType, resolveTicketType } from './ticket-types';
+import { Injectable, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { DatabaseService } from "../database/database.service";
+import { CompanyConfig } from "../database/database.types";
+import { GeminiDecision } from "../gemini/gemini.service";
+import { categoryName, resolveCategoryId } from "./categories";
+import { TicketType, resolveTicketType } from "./ticket-types";
 
 /** Estructura que se envia al backend para crear el ticket. */
 export interface TicketSendPayload {
@@ -62,13 +62,13 @@ export class TicketService {
     private readonly config: ConfigService,
     private readonly database: DatabaseService,
   ) {
-    this.baseUrl = this.config.get<string>('ticketApi.baseUrl') ?? '';
+    this.baseUrl = this.config.get<string>("ticketApi.baseUrl") ?? "";
     this.sendPath =
-      this.config.get<string>('ticketApi.sendPath') ?? '/api/v1/mail/send';
+      this.config.get<string>("ticketApi.sendPath") ?? "/api/v1/mail/send";
     this.defaultCategoryId =
-      Number(this.config.get<number>('ticketApi.defaultCategoryId')) || 66;
+      Number(this.config.get<number>("ticketApi.defaultCategoryId")) || 66;
     this.timeoutMs =
-      Number(this.config.get<number>('ticketApi.timeoutMs')) || 15000;
+      Number(this.config.get<number>("ticketApi.timeoutMs")) || 15000;
   }
 
   /** Construye el payload exacto que espera el backend a partir de la decision de la IA. */
@@ -78,14 +78,13 @@ export class TicketService {
   ): TicketSendPayload {
     const data = decision.ticket_data;
     const email =
-      (data?.solicitante || '').trim() ||
-      (requesterEmailFallback || '').trim();
+      (data?.solicitante || "").trim() || (requesterEmailFallback || "").trim();
 
-    const titulo = (data?.titulo || '').trim();
-    const descripcion = (data?.descripcion || '').trim();
+    const titulo = (data?.titulo || "").trim();
+    const descripcion = (data?.descripcion || "").trim();
     const description = [titulo, descripcion]
       .filter((part) => part.length > 0)
-      .join('\n\n');
+      .join("\n\n");
 
     const categoryId = resolveCategoryId(
       data?.categoria_id,
@@ -121,8 +120,8 @@ export class TicketService {
     };
 
     if (!payload.email) {
-      base.error = 'No se pudo determinar el email del solicitante';
-      await this.logResult(company, context, base, 'warn');
+      base.error = "No se pudo determinar el email del solicitante";
+      await this.logResult(company, context, base, "warn");
       return base;
     }
 
@@ -131,14 +130,14 @@ export class TicketService {
 
     // Body exacto que se envia al endpoint de creacion de ticket.
     const body = JSON.stringify(payload);
-    console.log(`[TICKET] POST ${url} -> body: ${body}`);
+    console.log(`body: ${body}   TERMINAAAAAAAAAAAAAAAAAAAAAA`);
 
     try {
       const res = await fetch(url, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
+          "Content-Type": "application/json",
+          Accept: "application/json",
         },
         body,
         signal: controller.signal,
@@ -161,27 +160,26 @@ export class TicketService {
         base.error =
           parsed?.error ||
           `El backend respondio ${res.status}: ${this.truncate(raw)}`;
-        await this.logResult(company, context, base, 'error');
+        await this.logResult(company, context, base, "error");
         return base;
       }
 
       base.sent = parsed?.sent === true;
       if (!base.sent) {
-        base.error =
-          parsed?.error || 'El backend respondio sin sent=true';
-        await this.logResult(company, context, base, 'error');
+        base.error = parsed?.error || "El backend respondio sin sent=true";
+        await this.logResult(company, context, base, "error");
         return base;
       }
 
-      await this.logResult(company, context, base, 'success');
+      await this.logResult(company, context, base, "success");
       return base;
     } catch (err) {
       const error = err as Error;
       base.error =
-        error.name === 'AbortError'
+        error.name === "AbortError"
           ? `Timeout (${this.timeoutMs}ms) llamando al backend de tickets`
           : error.message;
-      await this.logResult(company, context, base, 'error', error);
+      await this.logResult(company, context, base, "error", error);
       return base;
     } finally {
       clearTimeout(timer);
@@ -192,11 +190,12 @@ export class TicketService {
     company: CompanyConfig,
     context: TicketCreateContext,
     result: TicketCreationResult,
-    level: 'success' | 'warn' | 'error',
+    level: "success" | "warn" | "error",
     error?: Error,
   ): Promise<void> {
     const resolvedCategoryName =
-      result.response?.category?.name ?? categoryName(result.request.categoryId);
+      result.response?.category?.name ??
+      categoryName(result.request.categoryId);
 
     const details = {
       url: result.url,
@@ -213,7 +212,7 @@ export class TicketService {
     console.log(
       JSON.stringify(
         {
-          event: result.sent ? 'ticket.created' : 'ticket.error',
+          event: result.sent ? "ticket.created" : "ticket.error",
           timestamp: new Date().toISOString(),
           company_id: company.id,
           company_name: company.name,
@@ -248,10 +247,10 @@ export class TicketService {
         aiInteractionId: context.aiInteractionId,
         level,
         component: TicketService.name,
-        event: result.sent ? 'ticket.created' : 'ticket.error',
+        event: result.sent ? "ticket.created" : "ticket.error",
         message: result.sent
-          ? 'Ticket creado en el backend'
-          : `No se pudo crear el ticket: ${result.error ?? 'error desconocido'}`,
+          ? "Ticket creado en el backend"
+          : `No se pudo crear el ticket: ${result.error ?? "error desconocido"}`,
         details,
         error,
       });
