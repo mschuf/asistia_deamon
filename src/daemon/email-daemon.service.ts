@@ -344,6 +344,7 @@ export class EmailDaemonService
           const payload = this.ticket.buildPayload(decision);
           ticketResult = {
             sent: true,
+            mailSent: true,
             skipped: true,
             url: '',
             http_status: null,

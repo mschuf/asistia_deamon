@@ -18,6 +18,8 @@ export interface TicketSendPayload {
 export interface TicketSendResponse {
   sent?: boolean;
   error?: string | null;
+  /** Codigo de error del backend (ej. MAIL_SEND_FAILED). */
+  code?: string | null;
   requester?: {
     userId?: number;
     name?: string;
@@ -34,7 +36,14 @@ export interface TicketSendResponse {
 
 /** Resultado normalizado que el daemon persiste junto a la decision. */
 export interface TicketCreationResult {
+  /**
+   * true si el ticket quedo CREADO en el backend. Es la senal de
+   * idempotencia: con sent=true el daemon no reintenta y no duplica.
+   * Ojo: sent=true NO implica que el correo se haya enviado (ver mailSent).
+   */
   sent: boolean;
+  /** true solo si el backend confirmo el envio del correo (HTTP 200). */
+  mailSent: boolean;
   skipped: boolean;
   url: string;
   http_status: number | null;
@@ -111,6 +120,7 @@ export class TicketService {
 
     const base: TicketCreationResult = {
       sent: false,
+      mailSent: false,
       skipped: false,
       url,
       http_status: null,
@@ -156,22 +166,35 @@ export class TicketService {
       }
       base.response = parsed;
 
-      if (!res.ok) {
-        base.error =
-          parsed?.error ||
-          `El backend respondio ${res.status}: ${this.truncate(raw)}`;
-        await this.logResult(company, context, base, "error");
+      const backendError = parsed?.error || parsed?.code || null;
+
+      // Caso OK (HTTP 200): ticket creado y correo enviado. Body suele venir
+      // vacio, asi que NO dependemos de parsed?.sent.
+      if (res.ok) {
+        base.sent = true;
+        base.mailSent = true;
+        await this.logResult(company, context, base, "success");
         return base;
       }
 
-      base.sent = parsed?.sent === true;
-      if (!base.sent) {
-        base.error = parsed?.error || "El backend respondio sin sent=true";
-        await this.logResult(company, context, base, "error");
+      // Caso fallo SMTP (HTTP 502, MAIL_SEND_FAILED): el ticket SI quedo
+      // creado, solo fallo el envio del correo. Marcamos sent=true para que
+      // la idempotencia evite duplicar el ticket en el proximo ciclo; el
+      // reenvio del correo es responsabilidad del backend, no del daemon.
+      if (res.status === 502) {
+        base.sent = true;
+        base.mailSent = false;
+        base.error = backendError || "MAIL_SEND_FAILED";
+        await this.logResult(company, context, base, "warn");
         return base;
       }
 
-      await this.logResult(company, context, base, "success");
+      // Caso usuario/categoria invalidos (HTTP 400/404) u otros errores:
+      // el ticket NO se creo. sent=false -> el correo se reintenta luego.
+      base.error =
+        backendError ||
+        `El backend respondio ${res.status}: ${this.truncate(raw)}`;
+      await this.logResult(company, context, base, "error");
       return base;
     } catch (err) {
       const error = err as Error;
@@ -203,6 +226,7 @@ export class TicketService {
       request: result.request,
       category_name: resolvedCategoryName,
       sent: result.sent,
+      mail_sent: result.mailSent,
       requester: result.response?.requester ?? null,
       user_mail_sent: result.response?.userMailSent ?? null,
       support_mail_sent: result.response?.supportMailSent ?? null,
@@ -225,9 +249,14 @@ export class TicketService {
       ),
     );
 
-    if (result.sent) {
+    if (result.sent && result.mailSent) {
       this.logger.log(
         `[empresa=${company.id}] [TICKET] Creado en backend para ${result.request.email} (categoria ${result.request.categoryId})`,
+      );
+    } else if (result.sent && !result.mailSent) {
+      // Ticket creado pero fallo el envio del correo (HTTP 502).
+      this.logger.warn(
+        `[empresa=${company.id}] [TICKET] Creado para ${result.request.email} pero FALLO el envio de correo: ${result.error}`,
       );
     } else {
       this.logger.error(
