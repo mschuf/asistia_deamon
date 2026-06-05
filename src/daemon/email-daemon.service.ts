@@ -407,11 +407,24 @@ export class EmailDaemonService
         },
       });
 
-      this.logger.log(
-        `[empresa=${company.id}] Modo test: no se marca como leido el mensaje ${message.id}`,
-      );
-      // TODO: Reactivar en produccion cuando el daemon pueda confirmar correos procesados.
-      // await this.outlook.markAsRead(company, message.id);
+      // Marcar como leido para no reprocesar. Aplica tanto si el correo
+      // requiere ticket como si no. Unica excepcion: ticket requerido pero
+      // NO creado (ej. 400/404) -> se deja sin leer para reintentar el
+      // proximo ciclo y no perder el ticket. El caso 502 (ticket creado,
+      // mail fallido) tiene sent=true, asi que SI se marca como leido.
+      const ticketRequiredButNotCreated =
+        decision.requiere_ticket && ticketResult?.sent !== true;
+
+      if (ticketRequiredButNotCreated) {
+        this.logger.warn(
+          `[empresa=${company.id}] Ticket requerido pero no creado para ${message.id}: se deja sin leer para reintentar`,
+        );
+      } else {
+        await this.outlook.markAsRead(company, message.id);
+        this.logger.log(
+          `[empresa=${company.id}] Mensaje ${message.id} marcado como leido`,
+        );
+      }
       return true;
     } catch (err) {
       const error = err as Error;
