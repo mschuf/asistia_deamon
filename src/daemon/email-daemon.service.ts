@@ -294,6 +294,38 @@ export class EmailDaemonService
         mailMessageId,
       });
 
+      // Antes de gastar tokens con la IA: si ya existe ticket para este
+      // correo (por mail_message_id), no reprocesamos. Marcamos como leido
+      // y terminamos el intento sin llamar a Gemini.
+      if (await this.database.hasTicketBeenCreated(mailMessageId)) {
+        this.logger.log(
+          `[empresa=${company.id}] [TICKET] Ya existe ticket para ${tag}: se omite IA y se marca como leido`,
+        );
+        await this.outlook.markAsRead(company, message.id);
+        await this.database.finishProcessingAttempt({
+          attemptId,
+          startedAt: attemptStartedAt,
+          status: 'success',
+          requiresTicket: true,
+        });
+        await this.database.logApp({
+          companyId: company.id,
+          runId,
+          mailMessageId,
+          attemptId,
+          level: 'info',
+          component: EmailDaemonService.name,
+          event: 'ticket.skipped',
+          message: 'Ticket ya creado previamente, se omite IA para no gastar tokens',
+          details: {
+            graph_message_id: message.id,
+            conversation_id: message.conversationId,
+            subject: message.subject,
+          },
+        });
+        return true;
+      }
+
       this.logger.log(
         `[empresa=${company.id}] Procesando ${tag} (conv=${message.conversationId})`,
       );
