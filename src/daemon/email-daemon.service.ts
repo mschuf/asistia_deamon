@@ -11,6 +11,10 @@ import { CompanyConfig, DaemonRunStatus } from '../database/database.types';
 import { GeminiService } from '../gemini/gemini.service';
 import { OutlookService } from '../microsoft/outlook.service';
 import { EmailMessage } from '../microsoft/types';
+import {
+  TicketCreationResult,
+  TicketService,
+} from '../ticket/ticket.service';
 import { TicketDecisionService } from './ticket-decision.service';
 
 @Injectable()
@@ -31,6 +35,7 @@ export class EmailDaemonService
     private readonly outlook: OutlookService,
     private readonly gemini: GeminiService,
     private readonly reporter: TicketDecisionService,
+    private readonly ticket: TicketService,
   ) {
     this.maxEmails = Number(
       this.config.get<number>('daemon.maxEmails') ?? 20,
@@ -279,6 +284,7 @@ export class EmailDaemonService
     const attemptStartedAt = Date.now();
     let mailMessageId: number | undefined;
     let attemptId: number | undefined;
+    let ticketResult: TicketCreationResult | null = null;
 
     try {
       mailMessageId = await this.database.upsertMailMessage(company, message);
@@ -328,12 +334,58 @@ export class EmailDaemonService
 
       this.reporter.report(company, message, thread, aiResult.decision);
 
+      const decision = aiResult.decision;
+
+      if (decision.requiere_ticket) {
+        const alreadyCreated =
+          await this.database.hasTicketBeenCreated(mailMessageId);
+
+        if (alreadyCreated) {
+          const payload = this.ticket.buildPayload(decision);
+          ticketResult = {
+            sent: true,
+            skipped: true,
+            url: '',
+            http_status: null,
+            request: payload,
+            response: null,
+            error: null,
+          };
+          this.logger.log(
+            `[empresa=${company.id}] [TICKET] Ya existe ticket para el mensaje ${message.id}, se omite creacion`,
+          );
+          await this.database.logApp({
+            companyId: company.id,
+            runId,
+            mailMessageId,
+            attemptId,
+            aiInteractionId: aiResult.aiInteractionId,
+            level: 'info',
+            component: EmailDaemonService.name,
+            event: 'ticket.skipped',
+            message: 'Ticket ya creado previamente, se omite para evitar duplicados',
+            details: {
+              graph_message_id: message.id,
+              conversation_id: message.conversationId,
+              request: payload,
+            },
+          });
+        } else {
+          ticketResult = await this.ticket.create(company, decision, {
+            runId,
+            attemptId,
+            mailMessageId,
+            aiInteractionId: aiResult.aiInteractionId,
+          });
+        }
+      }
+
       await this.database.finishProcessingAttempt({
         attemptId,
         startedAt: attemptStartedAt,
         status: 'success',
-        requiresTicket: aiResult.decision.requiere_ticket,
-        decisionJson: aiResult.decision,
+        requiresTicket: decision.requiere_ticket,
+        decisionJson: { ...decision, ticket_result: ticketResult },
       });
 
       await this.database.logApp({
@@ -377,10 +429,15 @@ export class EmailDaemonService
       });
 
       if (attemptId) {
+        // Si el ticket ya se habia creado antes del fallo, preservamos
+        // ticket_result en decision_json para que la idempotencia siga
+        // valiendo y no se duplique el ticket en el proximo ciclo.
         await this.database.finishProcessingAttempt({
           attemptId,
           startedAt: attemptStartedAt,
           status: 'error',
+          requiresTicket: ticketResult ? true : undefined,
+          decisionJson: ticketResult ? { ticket_result: ticketResult } : undefined,
           error,
         });
       }

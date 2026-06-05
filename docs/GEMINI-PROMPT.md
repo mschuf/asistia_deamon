@@ -140,13 +140,37 @@ El schema exacto que se le pasa a Gemini:
           type: SchemaType.STRING,
           description: 'Email del solicitante (from.emailAddress.address del último mensaje del usuario)',
         },
+        categoria_id: {
+          type: SchemaType.INTEGER,
+          description: 'Id de la categoría del catálogo (65..71). Si ninguna aplica con claridad, 66.',
+        },
+        categoria_nombre: {
+          type: SchemaType.STRING,
+          description: 'Nombre exacto de la categoría elegida',
+        },
       },
-      required: ['titulo', 'descripcion', 'prioridad', 'solicitante'],
+      required: ['titulo', 'descripcion', 'prioridad', 'solicitante', 'categoria_id'],
     },
   },
   required: ['requiere_ticket', 'motivo', 'ticket_data'],
 }
 ```
+
+### Catálogo de categorías
+
+La IA elige `ticket_data.categoria_id` entre estas categorías (el catálogo va embebido en el `prompt_template` de la tabla `prompt`):
+
+| id | nombre |
+| --- | --- |
+| 65 | Software: Office, Windows, SAP, Aplicaciones |
+| 66 | Hardware: PC, notebook, conectores **(default)** |
+| 67 | Internet, red, cableados, accesos |
+| 68 | Servidor, Switch, AD, Forti, Enlaces, Cloud |
+| 69 | Telefonía móvil, fija, internos |
+| 70 | CCTV, cámaras, DVR, TV, proyectores |
+| 71 | Impresoras, papel, tóner, conexión |
+
+Si la IA no devuelve un id válido del catálogo, el daemon usa el default (`66`, configurable con `TICKET_DEFAULT_CATEGORY_ID`). El catálogo vive en código en [src/ticket/categories.ts](../src/ticket/categories.ts) y debe mantenerse alineado con el prompt.
 
 > **Importante**: aunque `requiere_ticket` sea `false`, Gemini va a devolver `ticket_data` igual (con lo que considere). El código no rompe — simplemente no loguea `ticket_data` cuando `requiere_ticket=false`.
 
@@ -242,8 +266,31 @@ Después de recibir la respuesta, el código:
    - `descripcion` ← `latestMessage.body` o `bodyPreview`
    - `prioridad` ← `'Media'` (si no es uno de los 3 valores válidos)
    - `solicitante` ← `lastUserMessage.from.address` o `'desconocido@local'`
+   - `categoria_id` ← `66` (si no es un id válido del catálogo 65..71); `categoria_nombre` se recalcula a partir del id resuelto
 
 Esto hace que el JSON resultante **siempre sea utilizable** por el sistema de tickets downstream, aunque el modelo alucine.
+
+---
+
+## 5.b Creación del ticket en el backend
+
+Cuando `requiere_ticket=true`, el daemon llama al backend de tickets:
+
+```
+POST {TICKET_API_BASE_URL}{TICKET_API_SEND_PATH}   →   http://192.168.10.88:5173/api/v1/mail/send
+Content-Type: application/json
+
+{
+  "email": "<ticket_data.solicitante>",
+  "description": "<ticket_data.titulo + '\\n\\n' + ticket_data.descripcion>",
+  "categoryId": <ticket_data.categoria_id resuelto>
+}
+```
+
+- El mapeo lo arma `TicketService.buildPayload()` en [src/ticket/ticket.service.ts](../src/ticket/ticket.service.ts).
+- La respuesta del backend (`sent`, `requester`, `category`, …) se guarda en `email_processing_attempts.decision_json.ticket_result` y se registra en `app_logs` con evento `ticket.created` / `ticket.error`.
+- **Idempotencia**: antes de crear, el daemon consulta `hasTicketBeenCreated(mailMessageId)`, que mira dos fuentes: un intento con `decision_json.ticket_result.sent = true` **o** un `app_logs` con `event = 'ticket.created'` (señal append-only escrita apenas el POST tiene éxito, que el daemon nunca sobrescribe). Si alguna existe, no vuelve a crear (evita duplicados en modo test, donde el correo no se marca como leído y se reprocesa cada ciclo). Evento `ticket.skipped`. Además, si el ticket se creó pero un paso posterior falla, el `catch` preserva `ticket_result` en `decision_json`.
+- Si la llamada falla (red/HTTP/timeout), se guarda `sent=false` con el error y el correo se reintenta en el próximo ciclo.
 
 ---
 

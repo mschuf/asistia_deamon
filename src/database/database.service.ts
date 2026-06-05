@@ -273,6 +273,42 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  /**
+   * true si ya existe evidencia de que el ticket de este correo fue creado.
+   * Sirve para no crear tickets duplicados cuando, en modo test, el mismo
+   * correo se reprocesa en cada ciclo porque no se marca como leido.
+   *
+   * Se consultan DOS fuentes para cerrar la ventana de "dual-write":
+   *  - email_processing_attempts.decision_json.ticket_result.sent = true
+   *    (se persiste al finalizar el intento, despues del POST).
+   *  - app_logs con event = 'ticket.created' (se escribe en TicketService
+   *    inmediatamente despues de un POST exitoso; es append-only y el daemon
+   *    nunca lo sobrescribe, por lo que sobrevive aunque falle el guardado
+   *    posterior del intento).
+   */
+  async hasTicketBeenCreated(mailMessageId: number): Promise<boolean> {
+    const rows = await this.query<{ exists: boolean }>(
+      `
+      SELECT (
+        EXISTS (
+          SELECT 1
+          FROM email_processing_attempts
+          WHERE mail_message_id = $1
+            AND decision_json -> 'ticket_result' ->> 'sent' = 'true'
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM app_logs
+          WHERE mail_message_id = $1
+            AND event = 'ticket.created'
+        )
+      ) AS exists
+      `,
+      [mailMessageId],
+    );
+    return rows[0]?.exists === true;
+  }
+
   async createAiInteraction(input: {
     companyId: number;
     runId: number;

@@ -4,9 +4,10 @@ import { TicketDecisionService } from './ticket-decision.service';
 import { MicrosoftModule } from '../microsoft/microsoft.module';
 import { GeminiModule } from '../gemini/gemini.module';
 import { DatabaseModule } from '../database/database.module';
+import { TicketModule } from '../ticket/ticket.module';
 
 @Module({
-  imports: [DatabaseModule, MicrosoftModule, GeminiModule],
+  imports: [DatabaseModule, MicrosoftModule, GeminiModule, TicketModule],
   providers: [EmailDaemonService, TicketDecisionService],
   exports: [EmailDaemonService],
 })

@@ -8,12 +8,19 @@ import {
 import { DatabaseService } from '../database/database.service';
 import { CompanyConfig } from '../database/database.types';
 import { EmailThread } from '../microsoft/types';
+import {
+  TICKET_CATEGORIES,
+  categoryName,
+  resolveCategoryId,
+} from '../ticket/categories';
 
 export interface TicketData {
   titulo: string;
   descripcion: string;
   prioridad: 'Alta' | 'Media' | 'Baja';
   solicitante: string;
+  categoria_id: number;
+  categoria_nombre?: string;
 }
 
 export interface GeminiDecision {
@@ -120,8 +127,27 @@ export class GeminiService implements OnModuleInit {
               description:
                 'Email del solicitante que reporta el problema',
             },
+            categoria_id: {
+              type: SchemaType.INTEGER,
+              description: `Id de la categoria del catalogo que mejor describe el problema. Valores validos: ${TICKET_CATEGORIES.map(
+                (c) => `${c.id} (${c.name})`,
+              ).join(
+                '; ',
+              )}. Si ninguna aplica con claridad, usar 66.`,
+            },
+            categoria_nombre: {
+              type: SchemaType.STRING,
+              description:
+                'Nombre exacto de la categoria elegida, tal como figura en el catalogo',
+            },
           },
-          required: ['titulo', 'descripcion', 'prioridad', 'solicitante'],
+          required: [
+            'titulo',
+            'descripcion',
+            'prioridad',
+            'solicitante',
+            'categoria_id',
+          ],
         },
       },
       required: ['requiere_ticket', 'motivo', 'ticket_data'],
@@ -265,6 +291,16 @@ export class GeminiService implements OnModuleInit {
           : 'Media') as 'Alta' | 'Media' | 'Baja';
         parsed.ticket_data.solicitante =
           parsed.ticket_data.solicitante || requesterEmail;
+        const defaultCategoryId = resolveCategoryId(
+          this.config.get<number>('ticketApi.defaultCategoryId'),
+        );
+        parsed.ticket_data.categoria_id = resolveCategoryId(
+          parsed.ticket_data.categoria_id,
+          defaultCategoryId,
+        );
+        parsed.ticket_data.categoria_nombre =
+          categoryName(parsed.ticket_data.categoria_id) ??
+          parsed.ticket_data.categoria_nombre;
       }
 
       await this.database.finishAiInteraction({

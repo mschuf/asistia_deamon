@@ -15,6 +15,16 @@ Si ya tenes la base creada y solo queres quitar la configuracion de daemon desde
 psql -U postgres -d asistia_back -f sql/02_drop_company_daemon_config.sql
 ```
 
+Para **reemplazar el prompt existente** por la version que elige categoria de ticket
+(`ticket_data.categoria_id`) sin recrear el esquema:
+
+```bash
+psql -U postgres -d asistia_back -f sql/03_update_prompt_categories.sql
+```
+
+Hace `UPDATE prompt` (no inserta filas nuevas), corre dentro de una transaccion y muestra
+una verificacion antes del `COMMIT`. El texto base esta en `prompts/default-ticket-classifier.md`.
+
 Tablas principales:
 
 - `companies`: empresas/clientes, con su propia conexion Microsoft Graph.

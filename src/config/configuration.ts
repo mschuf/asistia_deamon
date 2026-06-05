@@ -23,6 +23,12 @@ export interface AppConfig {
     intervalSeconds: number;
     maxEmails: number;
   };
+  ticketApi: {
+    baseUrl: string;
+    sendPath: string;
+    defaultCategoryId: number;
+    timeoutMs: number;
+  };
 }
 
 const positiveInt = (value: string | undefined, fallback: number): number => {
@@ -56,5 +62,14 @@ export default (): AppConfig => ({
   daemon: {
     intervalSeconds: positiveInt(process.env.DAEMON_INTERVAL_SECONDS, 60),
     maxEmails: positiveInt(process.env.DAEMON_MAX_EMAILS, 20),
+  },
+  ticketApi: {
+    baseUrl: (process.env.TICKET_API_BASE_URL || 'http://192.168.10.88:5173').replace(
+      /\/+$/,
+      '',
+    ),
+    sendPath: process.env.TICKET_API_SEND_PATH || '/api/v1/mail/send',
+    defaultCategoryId: positiveInt(process.env.TICKET_DEFAULT_CATEGORY_ID, 66),
+    timeoutMs: positiveInt(process.env.TICKET_API_TIMEOUT_MS, 15000),
   },
 });
