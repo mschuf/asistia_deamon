@@ -136,6 +136,12 @@ El schema exacto que se le pasa a Gemini:
           description: 'Nivel de prioridad sugerido',
           format: 'enum',
         },
+        type: {
+          type: SchemaType.STRING,
+          enum: ['incident', 'request'],
+          description: 'Tipo de ticket: request para solicitudes; incident para incidentes de mayor impacto',
+          format: 'enum',
+        },
         solicitante: {
           type: SchemaType.STRING,
           description: 'Email del solicitante (from.emailAddress.address del último mensaje del usuario)',
@@ -149,7 +155,7 @@ El schema exacto que se le pasa a Gemini:
           description: 'Nombre exacto de la categoría elegida',
         },
       },
-      required: ['titulo', 'descripcion', 'prioridad', 'solicitante', 'categoria_id'],
+      required: ['titulo', 'descripcion', 'prioridad', 'type', 'solicitante', 'categoria_id'],
     },
   },
   required: ['requiere_ticket', 'motivo', 'ticket_data'],
@@ -265,6 +271,7 @@ Después de recibir la respuesta, el código:
    - `titulo` ← `thread.subject`
    - `descripcion` ← `latestMessage.body` o `bodyPreview`
    - `prioridad` ← `'Media'` (si no es uno de los 3 valores válidos)
+   - `type` ← `'incident'` si la prioridad resuelta es `'Alta'`; si no, `'request'`
    - `solicitante` ← `lastUserMessage.from.address` o `'desconocido@local'`
    - `categoria_id` ← `66` (si no es un id válido del catálogo 65..71); `categoria_nombre` se recalcula a partir del id resuelto
 
@@ -283,7 +290,8 @@ Content-Type: application/json
 {
   "email": "<ticket_data.solicitante>",
   "description": "<ticket_data.titulo + '\\n\\n' + ticket_data.descripcion>",
-  "categoryId": <ticket_data.categoria_id resuelto>
+  "categoryId": <ticket_data.categoria_id resuelto>,
+  "type": "<ticket_data.type resuelto>"
 }
 ```
 

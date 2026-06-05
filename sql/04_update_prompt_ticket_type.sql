@@ -1,15 +1,37 @@
-# Prompt: clasificador de tickets de soporte
+-- =====================================================================
+-- 04_update_prompt_ticket_type.sql
+-- ---------------------------------------------------------------------
+-- Reemplaza el prompt EXISTENTE (no inserta uno nuevo) para que la IA:
+--   1) Siga decidiendo si el correo requiere ticket (requiere_ticket).
+--   2) Elija categoria en ticket_data.categoria_id/categoria_nombre.
+--   3) Devuelva ticket_data.type con valor exacto "request" o "incident".
+--
+-- El daemon valida igualmente categoria_id y type. Si type no es valido,
+-- usa "incident" para prioridad Alta y "request" para el resto.
+--
+-- Ejecucion:
+--   psql -U postgres -d asistia_back -f sql/04_update_prompt_ticket_type.sql
+-- =====================================================================
 
-Este archivo documenta el prompt base que vive en la tabla `prompt`.
-El daemon no usa este archivo directamente; lo usa PostgreSQL.
+BEGIN;
 
-Para reemplazar el prompt existente con esta version, ejecutar:
-`sql/04_update_prompt_ticket_type.sql`.
+-- ---------------------------------------------------------------------
+-- Paso 0 (opcional): ver los prompts actuales antes de reemplazarlos.
+-- ---------------------------------------------------------------------
+-- SELECT id, company_id, left(system_instruction, 60) AS sys_preview, updated_at
+-- FROM prompt
+-- ORDER BY company_id;
 
-## system_instruction
-
-```text
-Sos un asistente que clasifica correos electronicos de una casilla de soporte de TI y prepara los datos para crear un ticket.
+-- ---------------------------------------------------------------------
+-- Paso 1: reemplazar el contenido del/los prompt(s) existentes.
+--
+-- Por defecto actualiza TODAS las filas de la tabla prompt (una por
+-- empresa). Si solo queres actualizar una empresa puntual, descomenta
+-- el bloque WHERE del final del UPDATE.
+-- ---------------------------------------------------------------------
+UPDATE prompt
+SET
+  system_instruction = $sys$Sos un asistente que clasifica correos electronicos de una casilla de soporte de TI y prepara los datos para crear un ticket.
 Devolves exclusivamente JSON valido con la estructura solicitada, sin texto adicional.
 
 Cuando NO requiere ticket (requiere_ticket=false):
@@ -24,13 +46,8 @@ Cuando SI requiere ticket (requiere_ticket=true):
 - ticket_data.categoria_id debe ser uno de los ids del catalogo de categorias que figura en el mensaje. Elegi la categoria que mejor describe el problema. Si ninguna aplica con claridad, usa 66.
 - ticket_data.categoria_nombre debe ser el nombre exacto de la categoria elegida.
 - ticket_data.type debe ser "request" cuando es una solicitud de baja prioridad, por ejemplo pedir una notebook, crear cuenta corporativa o preparar recursos para un funcionario nuevo.
-- ticket_data.type debe ser "incident" cuando es un incidente de prioridad superior, una falla paralizante o un evento critico, por ejemplo cyberataque, caida general, perdida de servicio o bloqueo que impide trabajar.
-```
-
-## prompt_template
-
-```text
-Analiza el siguiente hilo de correos electronicos.
+- ticket_data.type debe ser "incident" cuando es un incidente de prioridad superior, una falla paralizante o un evento critico, por ejemplo cyberataque, caida general, perdida de servicio o bloqueo que impide trabajar.$sys$,
+  prompt_template = $tpl$Analiza el siguiente hilo de correos electronicos.
 El hilo viene en orden descendente: {{message_order}}.
 El primer mensaje listado es el mas reciente.
 Empresa: {{company_name}}
@@ -63,31 +80,21 @@ Recorda:
 - Si el correo es un rebote, notificacion automatica, respuesta de sistema o confirmacion sin pedido nuevo, usa requiere_ticket=false.
 - Si requiere ticket, el titulo debe ser breve y la descripcion debe resumir el problema con contexto suficiente para que el equipo de soporte pueda actuar.
 - Elegi ticket_data.categoria_id del catalogo de arriba. Si ninguna categoria aplica con claridad, usa 66. Devolve tambien ticket_data.categoria_nombre con el nombre exacto de la categoria elegida.
-- Elegi ticket_data.type con valor exacto "request" o "incident".
-```
+- Elegi ticket_data.type con valor exacto "request" o "incident".$tpl$
+-- WHERE company_id = (SELECT id FROM companies WHERE name = 'Grupo Pettengill')
+;
 
-## placeholders
+-- ---------------------------------------------------------------------
+-- Paso 2: verificar el resultado (debe mostrar 1 fila por empresa, con
+-- updated_at recien actualizado). Revisa esto ANTES de confirmar.
+-- ---------------------------------------------------------------------
+SELECT
+  id,
+  company_id,
+  left(system_instruction, 70) AS sys_preview,
+  left(prompt_template, 70)    AS tpl_preview,
+  updated_at
+FROM prompt
+ORDER BY company_id;
 
-- `{{company_name}}`
-- `{{mailbox}}`
-- `{{thread_subject}}`
-- `{{conversation_id}}`
-- `{{thread_messages}}`
-- `{{requester_email}}`
-- `{{message_order}}`
-- `{{model}}`
-
-## salida (ticket_data)
-
-La IA devuelve, ademas de `requiere_ticket` y `motivo`, un objeto `ticket_data`:
-
-- `titulo` - resumen conciso del problema
-- `descripcion` - detalle limpio de la solicitud
-- `prioridad` - `Alta` | `Media` | `Baja`
-- `type` - `incident` | `request`
-- `solicitante` - email del usuario que reporta (se usa como `email` del ticket)
-- `categoria_id` - id de categoria del catalogo (65..71); el daemon usa `66` si no es valido
-- `categoria_nombre` - nombre exacto de la categoria elegida
-
-El daemon mapea esto al backend (`POST /api/v1/mail/send`) como
-`{ email: solicitante, description: titulo + descripcion, categoryId: categoria_id, type }`.
+COMMIT;

@@ -207,6 +207,7 @@ TicketData {
   titulo: string                // resumen conciso
   descripcion: string           // detalle limpio
   prioridad: 'Alta' | 'Media' | 'Baja'
+  type: 'incident' | 'request'  // tipo enviado al backend de tickets
   solicitante: string           // email del usuario (no del buzón soporte)
 }
 

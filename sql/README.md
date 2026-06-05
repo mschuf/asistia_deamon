@@ -22,6 +22,13 @@ Para **reemplazar el prompt existente** por la version que elige categoria de ti
 psql -U postgres -d asistia_back -f sql/03_update_prompt_categories.sql
 ```
 
+Para actualizar el prompt a la version que ademas devuelve `ticket_data.type`
+con `request` o `incident`:
+
+```bash
+psql -U postgres -d asistia_back -f sql/04_update_prompt_ticket_type.sql
+```
+
 Hace `UPDATE prompt` (no inserta filas nuevas), corre dentro de una transaccion y muestra
 una verificacion antes del `COMMIT`. El texto base esta en `prompts/default-ticket-classifier.md`.
 

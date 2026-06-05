@@ -13,11 +13,13 @@ import {
   categoryName,
   resolveCategoryId,
 } from '../ticket/categories';
+import { TicketType, resolveTicketType } from '../ticket/ticket-types';
 
 export interface TicketData {
   titulo: string;
   descripcion: string;
   prioridad: 'Alta' | 'Media' | 'Baja';
+  type: TicketType;
   solicitante: string;
   categoria_id: number;
   categoria_nombre?: string;
@@ -122,6 +124,13 @@ export class GeminiService implements OnModuleInit {
               description: 'Nivel de prioridad sugerido',
               format: 'enum',
             },
+            type: {
+              type: SchemaType.STRING,
+              enum: ['incident', 'request'],
+              description:
+                'Tipo de ticket. request para solicitudes de baja prioridad; incident para incidentes de mayor prioridad o paralizantes',
+              format: 'enum',
+            },
             solicitante: {
               type: SchemaType.STRING,
               description:
@@ -145,6 +154,7 @@ export class GeminiService implements OnModuleInit {
             'titulo',
             'descripcion',
             'prioridad',
+            'type',
             'solicitante',
             'categoria_id',
           ],
@@ -289,6 +299,10 @@ export class GeminiService implements OnModuleInit {
         )
           ? parsed.ticket_data.prioridad
           : 'Media') as 'Alta' | 'Media' | 'Baja';
+        parsed.ticket_data.type = resolveTicketType(
+          parsed.ticket_data.type,
+          parsed.ticket_data.prioridad,
+        );
         parsed.ticket_data.solicitante =
           parsed.ticket_data.solicitante || requesterEmail;
         const defaultCategoryId = resolveCategoryId(

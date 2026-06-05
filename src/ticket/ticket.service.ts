@@ -4,12 +4,14 @@ import { DatabaseService } from '../database/database.service';
 import { CompanyConfig } from '../database/database.types';
 import { GeminiDecision } from '../gemini/gemini.service';
 import { categoryName, resolveCategoryId } from './categories';
+import { TicketType, resolveTicketType } from './ticket-types';
 
 /** Estructura que se envia al backend para crear el ticket. */
 export interface TicketSendPayload {
   email: string;
   description: string;
   categoryId: number;
+  type: TicketType;
 }
 
 /** Respuesta esperada del backend /api/v1/mail/send. */
@@ -89,8 +91,9 @@ export class TicketService {
       data?.categoria_id,
       this.defaultCategoryId,
     );
+    const type = resolveTicketType(data?.type, data?.prioridad);
 
-    return { email, description, categoryId };
+    return { email, description, categoryId, type };
   }
 
   /**

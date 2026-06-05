@@ -177,6 +177,7 @@ Ticket a crear: {
   "titulo": "Sin acceso a VPN corporativo",
   "descripcion": "El usuario reporta que desde esta mañana no puede conectar al cliente VPN...",
   "prioridad": "Alta",
+  "type": "incident",
   "solicitante": "juan.perez@grupopettengill.com.py"
 }
 Estructura completa: { "event": "email.processed", ... "decision": { "requiere_ticket": true, "ticket_data": {...} } }
