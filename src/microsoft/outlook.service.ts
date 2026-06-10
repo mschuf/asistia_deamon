@@ -2,7 +2,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { MicrosoftAuthService } from './microsoft-auth.service';
 import {
   EmailMessage,
+  EmailParticipant,
   EmailThread,
+  GraphEmailAddressWrapper,
   GraphMessage,
   GraphMessagesResponse,
   MicrosoftMailboxConfig,
@@ -14,6 +16,17 @@ export class OutlookService {
 
   constructor(private readonly auth: MicrosoftAuthService) {}
 
+  private mapAddresses(
+    list?: GraphEmailAddressWrapper[],
+  ): EmailParticipant[] {
+    return (list || [])
+      .map((w) => ({
+        name: w.emailAddress?.name || '',
+        address: w.emailAddress?.address || '',
+      }))
+      .filter((a) => a.address);
+  }
+
   private mapMessage(msg: GraphMessage): EmailMessage {
     return {
       id: msg.id,
@@ -23,6 +36,8 @@ export class OutlookService {
         name: msg.from?.emailAddress?.name || '',
         address: msg.from?.emailAddress?.address || 'desconocido@local',
       },
+      to: this.mapAddresses(msg.toRecipients),
+      cc: this.mapAddresses(msg.ccRecipients),
       receivedDateTime:
         msg.receivedDateTime || msg.sentDateTime || new Date().toISOString(),
       bodyPreview: msg.bodyPreview || '',
@@ -63,7 +78,7 @@ export class OutlookService {
         $orderby: 'receivedDateTime desc',
         $top: maxEmails,
         $select:
-          'id,conversationId,subject,bodyPreview,receivedDateTime,from,isRead,body',
+          'id,conversationId,subject,bodyPreview,receivedDateTime,from,toRecipients,ccRecipients,isRead,body',
       })
       .get()) as GraphMessagesResponse;
 
@@ -81,7 +96,7 @@ export class OutlookService {
       .query({
         $filter: `conversationId eq '${conversationId.replace(/'/g, "''")}'`,
         $select:
-          'id,conversationId,subject,bodyPreview,receivedDateTime,from,isRead,body',
+          'id,conversationId,subject,bodyPreview,receivedDateTime,from,toRecipients,ccRecipients,isRead,body',
       })
       .get()) as GraphMessagesResponse;
 
@@ -99,6 +114,8 @@ export class OutlookService {
         conversationId,
         subject: '(sin asunto)',
         from: { name: '', address: '' },
+        to: [],
+        cc: [],
         receivedDateTime: new Date().toISOString(),
         bodyPreview: '',
         body: '',

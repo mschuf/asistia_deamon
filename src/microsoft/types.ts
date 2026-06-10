@@ -41,11 +41,18 @@ export interface MicrosoftMailboxConfig {
   msMailFolder: string;
 }
 
+export interface EmailParticipant {
+  name: string;
+  address: string;
+}
+
 export interface EmailMessage {
   id: string;
   conversationId: string;
   subject: string;
-  from: { name: string; address: string };
+  from: EmailParticipant;
+  to: EmailParticipant[];
+  cc: EmailParticipant[];
   receivedDateTime: string;
   bodyPreview: string;
   body: string;

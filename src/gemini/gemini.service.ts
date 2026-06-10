@@ -65,6 +65,15 @@ export class GeminiService implements OnModuleInit {
     this.logger.log('Gemini inicializado');
   }
 
+  private formatAddresses(list: { name: string; address: string }[]): string {
+    if (!list || list.length === 0) {
+      return '(ninguno)';
+    }
+    return list
+      .map((a) => `${a.name || ''} <${a.address}>`.trim())
+      .join(', ');
+  }
+
   private buildThreadText(thread: EmailThread): string {
     return thread.messages
       .map((m, idx) => {
@@ -73,6 +82,8 @@ export class GeminiService implements OnModuleInit {
           `--- Mensaje ${idx + 1} ---`,
           `Fecha: ${date}`,
           `De: ${m.from.name || ''} <${m.from.address}>`,
+          `Para: ${this.formatAddresses(m.to)}`,
+          `CC: ${this.formatAddresses(m.cc)}`,
           `Asunto: ${m.subject}`,
           '',
           m.body || m.bodyPreview,
@@ -200,6 +211,8 @@ export class GeminiService implements OnModuleInit {
           `Mensaje ${idx + 1}:`,
           `  Fecha: ${new Date(m.receivedDateTime).toISOString()}`,
           `  De: ${m.from.name || ''} <${m.from.address}>`,
+          `  Para: ${this.formatAddresses(m.to)}`,
+          `  CC: ${this.formatAddresses(m.cc)}`,
           `  Asunto: ${m.subject}`,
           `  Preview: ${preview || '(sin preview)'}`,
         ].join('\n');
@@ -221,12 +234,19 @@ export class GeminiService implements OnModuleInit {
 
   private findRequester(thread: EmailThread, company: CompanyConfig): string {
     const mailbox = company.msMailbox.toLowerCase();
+    // El hilo viene ordenado de mas nuevo a mas viejo. El solicitante real es
+    // quien ABRIO el hilo (mensaje mas antiguo), no quien respondio ultimo: un
+    // agente de soporte puede contestar "perfecto, te creo el ticket" dejando
+    // el buzon de la IA en Para/CC, y antes eso hacia que la IA tomara al
+    // soporte como solicitante. Recorremos del mas viejo al mas nuevo y nos
+    // quedamos con el primer remitente externo (distinto del buzon).
+    const oldestFirst = [...thread.messages].reverse();
     const message =
-      thread.messages.find(
-        (m) =>
-          m.from.address &&
-          m.from.address.toLowerCase() !== mailbox,
-      ) || thread.messages[0];
+      oldestFirst.find(
+        (m) => m.from.address && m.from.address.toLowerCase() !== mailbox,
+      ) ||
+      oldestFirst[0] ||
+      thread.messages[0];
 
     return message?.from.address || 'desconocido@local';
   }
