@@ -22,6 +22,7 @@ export interface AppConfig {
   daemon: {
     intervalSeconds: number;
     maxEmails: number;
+    forceNewTicketMarker: string;
   };
   ticketApi: {
     baseUrl: string;
@@ -62,6 +63,7 @@ export default (): AppConfig => ({
   daemon: {
     intervalSeconds: positiveInt(process.env.DAEMON_INTERVAL_SECONDS, 60),
     maxEmails: positiveInt(process.env.DAEMON_MAX_EMAILS, 20),
+    forceNewTicketMarker: process.env.DAEMON_FORCE_TICKET_MARKER || '#nuevoticket',
   },
   ticketApi: {
     baseUrl: (process.env.TICKET_API_BASE_URL || 'http://192.168.10.88:5173').replace(

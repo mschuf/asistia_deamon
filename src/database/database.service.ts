@@ -309,6 +309,52 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     return rows[0]?.exists === true;
   }
 
+  /**
+   * true si ya existe evidencia de que se creo un ticket para CUALQUIER
+   * mensaje de esta conversacion (mismo hilo de Graph), no solo para el
+   * mail_message_id puntual. Complementa a hasTicketBeenCreated: una
+   * respuesta al mismo hilo llega con un graph_message_id nuevo (por lo
+   * tanto un mail_message_id nuevo), asi que el chequeo por mensaje nunca
+   * encuentra evidencia previa y el backend externo (que no soporta
+   * "actualizar" un ticket ni expone su id) terminaria recibiendo un POST
+   * duplicado para el mismo tema.
+   */
+  async hasTicketBeenCreatedForConversation(
+    companyId: number,
+    conversationId: string | null | undefined,
+  ): Promise<boolean> {
+    if (!conversationId) {
+      return false;
+    }
+
+    const rows = await this.query<{ exists: boolean }>(
+      `
+      SELECT EXISTS (
+        SELECT 1
+        FROM mail_messages mm
+        WHERE mm.company_id = $1
+          AND mm.conversation_id = $2
+          AND (
+            EXISTS (
+              SELECT 1
+              FROM email_processing_attempts epa
+              WHERE epa.mail_message_id = mm.id
+                AND epa.decision_json -> 'ticket_result' ->> 'sent' = 'true'
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM app_logs al
+              WHERE al.mail_message_id = mm.id
+                AND al.event = 'ticket.created'
+            )
+          )
+      ) AS exists
+      `,
+      [companyId, conversationId],
+    );
+    return rows[0]?.exists === true;
+  }
+
   async createAiInteraction(input: {
     companyId: number;
     runId: number;

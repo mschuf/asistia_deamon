@@ -10,7 +10,7 @@ import { DatabaseService } from '../database/database.service';
 import { CompanyConfig, DaemonRunStatus } from '../database/database.types';
 import { GeminiService } from '../gemini/gemini.service';
 import { OutlookService } from '../microsoft/outlook.service';
-import { EmailMessage } from '../microsoft/types';
+import { EmailMessage, EmailThread } from '../microsoft/types';
 import {
   TicketCreationResult,
   TicketService,
@@ -24,6 +24,7 @@ export class EmailDaemonService
   private readonly logger = new Logger(EmailDaemonService.name);
   private readonly intervalName = 'email-poller';
   private readonly maxEmails: number;
+  private readonly forceNewTicketMarker: string;
   private currentBatch: EmailMessage[] = [];
   private running = false;
   private cycleInProgress = false;
@@ -39,6 +40,23 @@ export class EmailDaemonService
   ) {
     this.maxEmails = Number(
       this.config.get<number>('daemon.maxEmails') ?? 20,
+    );
+    this.forceNewTicketMarker = (
+      this.config.get<string>('daemon.forceNewTicketMarker') ?? '#nuevoticket'
+    ).toLowerCase();
+  }
+
+  /**
+   * Escape manual: si el asunto o el cuerpo del mensaje trae esta marca,
+   * se ignora el bloqueo de "ya existe ticket para este hilo" para ese
+   * mensaje puntual. Sirve para abrir un tema nuevo y relacionado dentro
+   * de una conversacion que ya tiene un ticket creado.
+   */
+  private hasForceNewTicketMarker(message: EmailMessage): boolean {
+    return (
+      message.subject?.toLowerCase().includes(this.forceNewTicketMarker) ||
+      message.bodyPreview?.toLowerCase().includes(this.forceNewTicketMarker) ||
+      false
     );
   }
 
@@ -295,11 +313,27 @@ export class EmailDaemonService
       });
 
       // Antes de gastar tokens con la IA: si ya existe ticket para este
-      // correo (por mail_message_id), no reprocesamos. Marcamos como leido
-      // y terminamos el intento sin llamar a Gemini.
-      if (await this.database.hasTicketBeenCreated(mailMessageId)) {
+      // correo (por mail_message_id) o para cualquier otro mensaje de esta
+      // misma conversacion (por conversation_id), no reprocesamos. Marcamos
+      // como leido y terminamos el intento sin llamar a Gemini. La marca
+      // #nuevoticket en el asunto/cuerpo fuerza la evaluacion igual, para
+      // permitir abrir un tema nuevo dentro del mismo hilo.
+      const forceNewTicket = this.hasForceNewTicketMarker(message);
+      const alreadyCreatedForMessage =
+        await this.database.hasTicketBeenCreated(mailMessageId);
+      const alreadyCreatedForConversation =
+        !forceNewTicket &&
+        !alreadyCreatedForMessage &&
+        (await this.database.hasTicketBeenCreatedForConversation(
+          company.id,
+          message.conversationId,
+        ));
+
+      if (alreadyCreatedForMessage || alreadyCreatedForConversation) {
         this.logger.log(
-          `[empresa=${company.id}] [TICKET] Ya existe ticket para ${tag}: se omite IA y se marca como leido`,
+          `[empresa=${company.id}] [TICKET] Ya existe ticket para ${
+            alreadyCreatedForConversation ? 'el hilo de ' : ''
+          }${tag}: se omite IA y se marca como leido`,
         );
         await this.outlook.markAsRead(company, message.id);
         await this.database.finishProcessingAttempt({
@@ -315,12 +349,19 @@ export class EmailDaemonService
           attemptId,
           level: 'info',
           component: EmailDaemonService.name,
-          event: 'ticket.skipped',
-          message: 'Ticket ya creado previamente, se omite IA para no gastar tokens',
+          event: alreadyCreatedForConversation
+            ? 'ticket.skipped.conversation'
+            : 'ticket.skipped',
+          message: alreadyCreatedForConversation
+            ? 'Ya existe ticket para otro mensaje de este mismo hilo, se omite IA'
+            : 'Ticket ya creado previamente, se omite IA para no gastar tokens',
           details: {
             graph_message_id: message.id,
             conversation_id: message.conversationId,
             subject: message.subject,
+            matched_by: alreadyCreatedForMessage
+              ? 'mail_message_id'
+              : 'conversation_id',
           },
         });
         return true;
@@ -329,10 +370,17 @@ export class EmailDaemonService
       this.logger.log(
         `[empresa=${company.id}] Procesando ${tag} (conv=${message.conversationId})`,
       );
-      const thread = await this.outlook.getThread(
-        company,
-        message.conversationId,
-      );
+      // #nuevoticket: se arma un hilo sintetico acotado a este mensaje para
+      // que Gemini describa solo el tema nuevo, no todo el historial ya
+      // ticketeado del hilo.
+      const thread: EmailThread = forceNewTicket
+        ? {
+            conversationId: message.conversationId,
+            subject: message.subject,
+            messages: [message],
+            latestMessage: message,
+          }
+        : await this.outlook.getThread(company, message.conversationId);
       this.logger.log(
         `[empresa=${company.id}] Hilo de ${tag} -> ${thread.messages.length} mensaje(s)`,
       );
@@ -369,8 +417,17 @@ export class EmailDaemonService
       const decision = aiResult.decision;
 
       if (decision.requiere_ticket) {
-        const alreadyCreated =
+        const alreadyCreatedForMessage =
           await this.database.hasTicketBeenCreated(mailMessageId);
+        const alreadyCreatedForConversation =
+          !forceNewTicket &&
+          !alreadyCreatedForMessage &&
+          (await this.database.hasTicketBeenCreatedForConversation(
+            company.id,
+            message.conversationId,
+          ));
+        const alreadyCreated =
+          alreadyCreatedForMessage || alreadyCreatedForConversation;
 
         if (alreadyCreated) {
           const payload = this.ticket.buildPayload(decision);
@@ -385,7 +442,9 @@ export class EmailDaemonService
             error: null,
           };
           this.logger.log(
-            `[empresa=${company.id}] [TICKET] Ya existe ticket para el mensaje ${message.id}, se omite creacion`,
+            `[empresa=${company.id}] [TICKET] Ya existe ticket para ${
+              alreadyCreatedForConversation ? 'el hilo de ' : ''
+            }el mensaje ${message.id}, se omite creacion`,
           );
           await this.database.logApp({
             companyId: company.id,
@@ -395,12 +454,19 @@ export class EmailDaemonService
             aiInteractionId: aiResult.aiInteractionId,
             level: 'info',
             component: EmailDaemonService.name,
-            event: 'ticket.skipped',
-            message: 'Ticket ya creado previamente, se omite para evitar duplicados',
+            event: alreadyCreatedForConversation
+              ? 'ticket.skipped.conversation'
+              : 'ticket.skipped',
+            message: alreadyCreatedForConversation
+              ? 'Ya existe ticket para otro mensaje de este mismo hilo, se omite para evitar duplicados'
+              : 'Ticket ya creado previamente, se omite para evitar duplicados',
             details: {
               graph_message_id: message.id,
               conversation_id: message.conversationId,
               request: payload,
+              matched_by: alreadyCreatedForMessage
+                ? 'mail_message_id'
+                : 'conversation_id',
             },
           });
         } else {
@@ -410,6 +476,25 @@ export class EmailDaemonService
             mailMessageId,
             aiInteractionId: aiResult.aiInteractionId,
           });
+
+          if (forceNewTicket && ticketResult.sent) {
+            await this.database.logApp({
+              companyId: company.id,
+              runId,
+              mailMessageId,
+              attemptId,
+              aiInteractionId: aiResult.aiInteractionId,
+              level: 'info',
+              component: EmailDaemonService.name,
+              event: 'ticket.conversation_override',
+              message: 'Ticket creado por marca #nuevoticket pese a que el hilo ya tenia uno',
+              details: {
+                graph_message_id: message.id,
+                conversation_id: message.conversationId,
+                subject: message.subject,
+              },
+            });
+          }
         }
       }
 
